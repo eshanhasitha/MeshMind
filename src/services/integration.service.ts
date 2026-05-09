@@ -72,45 +72,58 @@ const buildDiscordPayload = (
   alert: Alert
 ) => {
   return {
-    username: "ProxyMaze",
+    content: `ProxyMaze ${event}`,
+
     embeds: [
       {
         title: `ProxyMaze ${event}`,
-        description: alert.message || `ProxyMaze ${event}`,
-        color: event === "alert.fired" ? 15158332 : 3066993,
+
+        description:
+          alert.message ||
+          "Proxy alert triggered",
+
+        color:
+          event === "alert.fired"
+            ? 16711680
+            : 65280,
+
         fields: [
           {
             name: "Alert ID",
-            value: alert.alert_id || "unknown",
+            value: String(alert.alert_id),
             inline: false,
           },
           {
             name: "Failure Rate",
-            value: String(alert.failure_rate ?? 0),
+            value: String(alert.failure_rate),
             inline: true,
           },
           {
             name: "Failed Proxies",
-            value: String(alert.failed_proxies ?? 0),
+            value: String(alert.failed_proxies),
             inline: true,
           },
           {
             name: "Threshold",
-            value: String(alert.threshold ?? 0.2),
+            value: String(alert.threshold),
             inline: true,
           },
           {
             name: "Failed IDs",
             value:
-              alert.failed_proxy_ids && alert.failed_proxy_ids.length > 0
+              alert.failed_proxy_ids.length > 0
                 ? alert.failed_proxy_ids.join(", ")
                 : "None",
             inline: false,
           },
         ],
+
         footer: {
           text: "ProxyMaze Monitor",
         },
+
+        timestamp:
+          new Date().toISOString(),
       },
     ],
   };
