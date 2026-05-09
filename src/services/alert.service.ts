@@ -105,7 +105,7 @@ export const evaluateAlerts =
                 proxy.id
             ),
 
-          threshold:
+          threshold_value:
             ALERT_THRESHOLD,
 
           fired_at:
