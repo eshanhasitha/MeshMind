@@ -18,8 +18,8 @@ export const listAlerts = (
       getAlerts();
 
     return res.status(200).json({
-      total: alerts.length,
-
+      total:
+        alerts.length,
       alerts,
     });
 

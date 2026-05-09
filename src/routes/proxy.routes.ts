@@ -27,15 +27,16 @@ router.get(
 );
 
 /*
- GET /proxies/:id
+ DELETE /proxies
 */
-router.get(
-  "/:id",
-  getSingleProxy
+router.delete(
+  "/",
+  deleteAllProxies
 );
 
 /*
- GET /proxies/:id/history
+ IMPORTANT:
+ history route MUST come BEFORE /:id
 */
 router.get(
   "/:id/history",
@@ -43,11 +44,11 @@ router.get(
 );
 
 /*
- DELETE /proxies
+ GET /proxies/:id
 */
-router.delete(
-  "/",
-  deleteAllProxies
+router.get(
+  "/:id",
+  getSingleProxy
 );
 
 export default router;

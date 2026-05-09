@@ -1,6 +1,6 @@
 export interface Webhook {
 
-  id: string;
+  webhook_id: string;
 
   url: string;
 
@@ -14,6 +14,8 @@ export interface WebhookDelivery {
   webhook_url: string;
 
   event: string;
+
+  alert_id: string;
 
   status:
     | "pending"
