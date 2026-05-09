@@ -45,11 +45,7 @@ export const createWebhook =
 
       return res
         .status(201)
-        .json({
-          webhook_id:
-            webhook.webhook_id,
-          url: webhook.url,
-        });
+        .json(webhook);
 
     } catch (error) {
 
