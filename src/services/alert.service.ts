@@ -45,6 +45,20 @@ const buildResolvedPayload = (alert: Alert) => {
   };
 };
 
+const syncActiveAlertState = (
+  alert: Alert,
+  failureRate: number,
+  total: number,
+  failedCount: number,
+  failedProxyIds: string[]
+): void => {
+  alert.failure_rate = failureRate;
+  alert.total_proxies = total;
+  alert.failed_proxies = failedCount;
+  alert.failed_proxy_ids = failedProxyIds;
+  alert.threshold = ALERT_THRESHOLD;
+};
+
 export const evaluateAlerts = async (): Promise<void> => {
   if (evaluating) {
     return;
@@ -69,12 +83,12 @@ export const evaluateAlerts = async (): Promise<void> => {
 
         resolvedWebhookSent.add(activeAlert.alert_id);
 
-        sendWebhookEvent(
+        await sendWebhookEvent(
           "alert.resolved",
           buildResolvedPayload(activeAlert)
         );
 
-        sendIntegrationEvent(
+        await sendIntegrationEvent(
           "alert.resolved",
           activeAlert
         );
@@ -106,6 +120,17 @@ export const evaluateAlerts = async (): Promise<void> => {
       failureRate >= ALERT_THRESHOLD &&
       activeAlert
     ) {
+      /*
+       Keep active alert snapshot consistent with current breach state.
+      */
+      syncActiveAlertState(
+        activeAlert,
+        failureRate,
+        total,
+        failedCount,
+        failedProxyIds
+      );
+
       return;
     }
 
@@ -118,7 +143,7 @@ export const evaluateAlerts = async (): Promise<void> => {
       !activeAlert
     ) {
       const newAlert: Alert = {
-        alert_id: uuidv4(),
+        alert_id: `alert-${uuidv4()}`,
         status: "active",
         failure_rate: failureRate,
         total_proxies: total,
@@ -135,12 +160,12 @@ export const evaluateAlerts = async (): Promise<void> => {
       if (!firedWebhookSent.has(newAlert.alert_id)) {
         firedWebhookSent.add(newAlert.alert_id);
 
-        sendWebhookEvent(
+        await sendWebhookEvent(
           "alert.fired",
           buildFiredPayload(newAlert)
         );
 
-        sendIntegrationEvent(
+        await sendIntegrationEvent(
           "alert.fired",
           newAlert
         );
@@ -163,12 +188,12 @@ export const evaluateAlerts = async (): Promise<void> => {
       if (!resolvedWebhookSent.has(activeAlert.alert_id)) {
         resolvedWebhookSent.add(activeAlert.alert_id);
 
-        sendWebhookEvent(
+        await sendWebhookEvent(
           "alert.resolved",
           buildResolvedPayload(activeAlert)
         );
 
-        sendIntegrationEvent(
+        await sendIntegrationEvent(
           "alert.resolved",
           activeAlert
         );

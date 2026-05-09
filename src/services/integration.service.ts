@@ -16,10 +16,22 @@ export const addIntegration = (
   username?: string,
   events: string[] = []
 ): Integration => {
+  const normalizedWebhookUrl = webhook_url.trim();
+
+  const existing = integrations.find(
+    (integration) =>
+      integration.type === type &&
+      integration.webhook_url === normalizedWebhookUrl
+  );
+
+  if (existing) {
+    return existing;
+  }
+
   const integration: Integration = {
     id: uuidv4(),
     type,
-    webhook_url,
+    webhook_url: normalizedWebhookUrl,
     username,
     events,
     created_at: new Date().toISOString(),
@@ -41,8 +53,13 @@ const buildSlackPayload = (
   alert: Alert,
   username?: string
 ) => {
+  const safeUsername =
+    username && username.trim().length > 0
+      ? username.trim()
+      : "ProxyMaze";
+
   return {
-    username: username || "ProxyMaze",
+    username: safeUsername,
     text: `ProxyMaze ${event}: ${alert.message || "Alert event"}`,
     attachments: [
       {
@@ -71,7 +88,6 @@ const buildSlackPayload = (
 
 const buildDiscordPayload = (event: string, alert: Alert) => {
   return {
-    content: `ProxyMaze ${event}`,
     embeds: [
       {
         title: `ProxyMaze ${event}`,
@@ -94,10 +110,24 @@ const buildDiscordPayload = (event: string, alert: Alert) => {
         footer: {
           text: "ProxyMaze Monitor",
         },
-        timestamp: new Date().toISOString(),
       },
     ],
   };
+};
+
+const parseRetryAfterSeconds = (error: any): number => {
+  const retryAfterRaw =
+    error?.response?.headers?.["retry-after"] ??
+    error?.response?.data?.retry_after ??
+    5;
+
+  const retryAfter = Number(retryAfterRaw);
+
+  if (!Number.isFinite(retryAfter) || retryAfter <= 0) {
+    return 5;
+  }
+
+  return retryAfter;
 };
 
 export const sendIntegrationEvent = async (
@@ -125,16 +155,15 @@ export const sendIntegrationEvent = async (
         timeout: 5000,
       });
 
-      console.log(`✅ ${integration.type} integration sent`);
+      console.log(`[INTEGRATION] ${integration.type} sent`);
     } catch (error: any) {
       const status = error?.response?.status;
 
       if (status === 429) {
-        const retryAfter =
-          error?.response?.data?.retry_after || 5;
+        const retryAfter = parseRetryAfterSeconds(error);
 
         console.log(
-          `⏳ ${integration.type} rate limited. Retrying after ${retryAfter}s`
+          `[INTEGRATION] ${integration.type} rate limited. Retrying after ${retryAfter}s`
         );
 
         await sleep(retryAfter * 1000);
@@ -147,11 +176,13 @@ export const sendIntegrationEvent = async (
             timeout: 5000,
           });
 
-          console.log(`✅ ${integration.type} integration sent after retry`);
+          console.log(
+            `[INTEGRATION] ${integration.type} sent after retry`
+          );
           continue;
         } catch (retryError: any) {
           console.log(
-            `❌ ${integration.type} retry failed`,
+            `[INTEGRATION] ${integration.type} retry failed`,
             retryError?.response?.status || retryError?.message
           );
           continue;
@@ -159,7 +190,7 @@ export const sendIntegrationEvent = async (
       }
 
       console.log(
-        `❌ ${integration.type} integration failed`,
+        `[INTEGRATION] ${integration.type} failed`,
         status || error?.message
       );
     }

@@ -9,6 +9,22 @@ let scheduler:
   | NodeJS.Timeout
   | null = null;
 
+let cycleInProgress = false;
+
+const runMonitorCycle = async (): Promise<void> => {
+  if (cycleInProgress) {
+    return;
+  }
+
+  cycleInProgress = true;
+
+  try {
+    await monitorAllProxies();
+  } finally {
+    cycleInProgress = false;
+  }
+};
+
 /*
  Start monitoring scheduler
 */
@@ -27,7 +43,7 @@ export const startMonitoringScheduler =
       getConfig();
 
     console.log(
-      `📡 Monitoring every ${config.check_interval_seconds}s`
+      `[SCHEDULER] Monitoring every ${config.check_interval_seconds}s`
     );
 
     /*
@@ -36,10 +52,19 @@ export const startMonitoringScheduler =
     scheduler =
       setInterval(
         async () => {
-          await monitorAllProxies();
+          await runMonitorCycle();
         },
 
         config.check_interval_seconds *
           1000
       );
+
+    /*
+     Run one cycle immediately so new configuration/pool applies now.
+    */
+    runMonitorCycle().catch(() => {
+      /*
+       Errors are already handled inside monitoring path.
+      */
+    });
   };

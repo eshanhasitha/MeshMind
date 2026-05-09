@@ -18,9 +18,19 @@ export const getDeliveries = (): WebhookDelivery[] => {
 };
 
 export const addWebhook = (url: string): Webhook => {
+  const normalizedUrl = url.trim();
+
+  const existing = webhooks.find(
+    (webhook) => webhook.url === normalizedUrl
+  );
+
+  if (existing) {
+    return existing;
+  }
+
   const webhook: Webhook = {
     webhook_id: `wh-${uuidv4()}`,
-    url,
+    url: normalizedUrl,
     created_at: new Date().toISOString(),
   };
 
@@ -43,15 +53,20 @@ export const sendWebhookEvent = async (
   const alertId = payload.alert_id;
 
   for (const webhook of webhooks) {
-    const successfulDelivery = deliveries.find(
+    const existingDelivery = deliveries.find(
       (delivery) =>
         delivery.webhook_url === webhook.url &&
         delivery.event === event &&
-        delivery.alert_id === alertId &&
-        delivery.status === "success"
+        delivery.alert_id === alertId
     );
 
-    if (successfulDelivery) {
+    if (
+      existingDelivery &&
+      (
+        existingDelivery.status === "success" ||
+        existingDelivery.status === "pending"
+      )
+    ) {
       continue;
     }
 

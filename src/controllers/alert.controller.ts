@@ -17,11 +17,12 @@ export const listAlerts = (
     const alerts =
       getAlerts();
 
-    return res.status(200).json({
-      total:
-        alerts.length,
-      alerts,
-    });
+    /*
+     Spec: GET /alerts response body is a JSON array.
+    */
+    return res
+      .status(200)
+      .json(alerts);
 
   } catch (error) {
 
