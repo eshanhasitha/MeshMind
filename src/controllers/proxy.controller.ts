@@ -23,9 +23,21 @@ export const createProxies = (
       });
     }
 
+    if (!proxies.every((proxy) => typeof proxy === "string")) {
+      return res.status(400).json({
+        message: "each proxy must be a string",
+      });
+    }
+
+    if (replace !== undefined && typeof replace !== "boolean") {
+      return res.status(400).json({
+        message: "replace must be boolean",
+      });
+    }
+
     const created = addProxies(
       proxies,
-      replace || false
+      replace ?? false
     );
 
     return res.status(201).json({
