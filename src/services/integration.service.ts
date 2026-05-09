@@ -74,19 +74,36 @@ export const sendIntegrationEvent = async (
   alert: Alert
 ): Promise<void> => {
   for (const integration of integrations) {
-    try {
-      const payload =
-        integration.type === "slack"
-          ? buildSlackPayload(event, alert, integration.username)
-          : buildDiscordPayload(event, alert);
+    const payload =
+      integration.type === "slack"
+        ? buildSlackPayload(event, alert, integration.username)
+        : buildDiscordPayload(event, alert);
 
+    try {
       await axios.post(integration.webhook_url, payload);
 
       console.log(`✅ ${integration.type} integration sent`);
     } catch (error: any) {
+      const status = error?.response?.status;
+
+      if (status === 429) {
+        const retryAfter = error?.response?.data?.retry_after || 2;
+
+        console.log(`⏳ Discord rate limited. Retry after ${retryAfter}s`);
+
+        await new Promise((resolve) =>
+          setTimeout(resolve, retryAfter * 1000)
+        );
+
+        await axios.post(integration.webhook_url, payload);
+
+        console.log("✅ discord integration sent after retry");
+        continue;
+      }
+
       console.log(
         `❌ ${integration.type} integration failed:`,
-        error?.response?.status || error?.message
+        status || error?.message
       );
     }
   }
