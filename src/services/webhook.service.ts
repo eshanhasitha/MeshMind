@@ -8,6 +8,7 @@ import {
 
 let webhooks: Webhook[] = [];
 let deliveries: WebhookDelivery[] = [];
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 export const getWebhooks = (): Webhook[] => {
   return webhooks;
@@ -41,6 +42,95 @@ export const addWebhook = (url: string): Webhook => {
 
 const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+type ResponseLike = {
+  status?: number;
+  data?: unknown;
+  headers?: Record<string, unknown>;
+};
+
+type HttpError = Error & {
+  response?: ResponseLike;
+};
+
+const createHttpError = (
+  message: string,
+  response: ResponseLike
+): HttpError => {
+  const error = new Error(message) as HttpError;
+  error.response = response;
+  return error;
+};
+
+const postJsonWithRedirects = async (
+  url: string,
+  payload: unknown,
+  timeoutMs: number,
+  maxRedirects: number = 5
+): Promise<void> => {
+  let currentUrl = url;
+
+  for (let i = 0; i <= maxRedirects; i += 1) {
+    const response = await axios.post(
+      currentUrl,
+      payload,
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        timeout: timeoutMs,
+        maxRedirects: 0,
+        validateStatus: () => true,
+      }
+    );
+
+    if (response.status >= 200 && response.status < 300) {
+      return;
+    }
+
+    if (REDIRECT_STATUSES.has(response.status)) {
+      const rawLocation = response.headers?.location;
+      const location =
+        typeof rawLocation === "string"
+          ? rawLocation
+          : Array.isArray(rawLocation)
+            ? rawLocation[0]
+            : undefined;
+
+      if (!location) {
+        throw createHttpError(
+          `Redirect status ${response.status} without location header`,
+          {
+            status: response.status,
+            data: response.data,
+            headers: response.headers as Record<string, unknown>,
+          }
+        );
+      }
+
+      currentUrl = new URL(
+        location,
+        currentUrl
+      ).toString();
+
+      continue;
+    }
+
+    throw createHttpError(
+      `Request failed with status ${response.status}`,
+      {
+        status: response.status,
+        data: response.data,
+        headers: response.headers as Record<string, unknown>,
+      }
+    );
+  }
+
+  throw createHttpError(
+    "Too many redirects",
+    { status: 310 }
+  );
+};
 
 const isTransientFailure = (status?: number): boolean => {
   return [500, 502, 503, 504].includes(status || 0);
@@ -86,12 +176,11 @@ export const sendWebhookEvent = async (
       try {
         delivery.attempts += 1;
 
-        await axios.post(webhook.url, payload, {
-          headers: {
-            "Content-Type": "application/json",
-          },
-          timeout: 5000,
-        });
+        await postJsonWithRedirects(
+          webhook.url,
+          payload,
+          5000
+        );
 
         delivery.status = "success";
         delivery.delivered_at = new Date().toISOString();

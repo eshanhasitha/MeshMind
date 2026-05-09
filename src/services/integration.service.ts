@@ -9,6 +9,7 @@ import {
 import { Alert } from "../models/alert.model";
 
 let integrations: Integration[] = [];
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 export const addIntegration = (
   type: IntegrationType,
@@ -17,6 +18,17 @@ export const addIntegration = (
   events: string[] = []
 ): Integration => {
   const normalizedWebhookUrl = webhook_url.trim();
+  const normalizedEvents = [
+    ...new Set(
+      events
+        .map((event) => event.trim())
+        .filter((event) => event.length > 0)
+    ),
+  ];
+  const normalizedUsername =
+    typeof username === "string"
+      ? username.trim()
+      : undefined;
 
   const existing = integrations.find(
     (integration) =>
@@ -25,6 +37,8 @@ export const addIntegration = (
   );
 
   if (existing) {
+    existing.username = normalizedUsername;
+    existing.events = normalizedEvents;
     return existing;
   }
 
@@ -32,8 +46,8 @@ export const addIntegration = (
     id: uuidv4(),
     type,
     webhook_url: normalizedWebhookUrl,
-    username,
-    events,
+    username: normalizedUsername,
+    events: normalizedEvents,
     created_at: new Date().toISOString(),
   };
 
@@ -47,6 +61,16 @@ export const getIntegrations = (): Integration[] => {
 
 const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+type ResponseLike = {
+  status?: number;
+  data?: unknown;
+  headers?: Record<string, unknown>;
+};
+
+type HttpError = Error & {
+  response?: ResponseLike;
+};
 
 const buildSlackPayload = (
   event: string,
@@ -88,6 +112,7 @@ const buildSlackPayload = (
 
 const buildDiscordPayload = (event: string, alert: Alert) => {
   return {
+    content: `ProxyMaze ${event}`,
     embeds: [
       {
         title: `ProxyMaze ${event}`,
@@ -130,6 +155,85 @@ const parseRetryAfterSeconds = (error: any): number => {
   return retryAfter;
 };
 
+const createHttpError = (
+  message: string,
+  response: ResponseLike
+): HttpError => {
+  const error = new Error(message) as HttpError;
+  error.response = response;
+  return error;
+};
+
+const postJsonWithRedirects = async (
+  url: string,
+  payload: unknown,
+  timeoutMs: number,
+  maxRedirects: number = 5
+): Promise<void> => {
+  let currentUrl = url;
+
+  for (let i = 0; i <= maxRedirects; i += 1) {
+    const response = await axios.post(
+      currentUrl,
+      payload,
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        timeout: timeoutMs,
+        maxRedirects: 0,
+        validateStatus: () => true,
+      }
+    );
+
+    if (response.status >= 200 && response.status < 300) {
+      return;
+    }
+
+    if (REDIRECT_STATUSES.has(response.status)) {
+      const rawLocation = response.headers?.location;
+      const location =
+        typeof rawLocation === "string"
+          ? rawLocation
+          : Array.isArray(rawLocation)
+            ? rawLocation[0]
+            : undefined;
+
+      if (!location) {
+        throw createHttpError(
+          `Redirect status ${response.status} without location header`,
+          {
+            status: response.status,
+            data: response.data,
+            headers: response.headers as Record<string, unknown>,
+          }
+        );
+      }
+
+      currentUrl = new URL(
+        location,
+        currentUrl
+      ).toString();
+
+      continue;
+    }
+
+    throw createHttpError(
+      `Request failed with status ${response.status}`,
+      {
+        status: response.status,
+        data: response.data,
+        headers: response.headers as Record<string, unknown>,
+      }
+    );
+  }
+
+  throw createHttpError(
+    "Too many redirects",
+    { status: 310 }
+  );
+};
+
 export const sendIntegrationEvent = async (
   event: string,
   alert: Alert
@@ -148,12 +252,11 @@ export const sendIntegrationEvent = async (
         : buildDiscordPayload(event, alert);
 
     try {
-      await axios.post(integration.webhook_url, payload, {
-        headers: {
-          "Content-Type": "application/json",
-        },
-        timeout: 5000,
-      });
+      await postJsonWithRedirects(
+        integration.webhook_url,
+        payload,
+        5000
+      );
 
       console.log(`[INTEGRATION] ${integration.type} sent`);
     } catch (error: any) {
@@ -169,12 +272,11 @@ export const sendIntegrationEvent = async (
         await sleep(retryAfter * 1000);
 
         try {
-          await axios.post(integration.webhook_url, payload, {
-            headers: {
-              "Content-Type": "application/json",
-            },
-            timeout: 5000,
-          });
+          await postJsonWithRedirects(
+            integration.webhook_url,
+            payload,
+            5000
+          );
 
           console.log(
             `[INTEGRATION] ${integration.type} sent after retry`
