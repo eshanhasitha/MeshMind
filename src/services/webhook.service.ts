@@ -143,20 +143,17 @@ export const sendWebhookEvent = async (
   const alertId = payload.alert_id;
 
   for (const webhook of webhooks) {
+    // Check for existing successful delivery with same event and alert_id
     const existingDelivery = deliveries.find(
       (delivery) =>
         delivery.webhook_url === webhook.url &&
         delivery.event === event &&
-        delivery.alert_id === alertId
+        delivery.alert_id === alertId &&
+        delivery.status === "success"
     );
 
-    if (
-      existingDelivery &&
-      (
-        existingDelivery.status === "success" ||
-        existingDelivery.status === "pending"
-      )
-    ) {
+    // Skip if we already successfully delivered this exact event
+    if (existingDelivery) {
       continue;
     }
 
@@ -172,7 +169,11 @@ export const sendWebhookEvent = async (
 
     deliveries.push(delivery);
 
-    while (delivery.status !== "success") {
+    // Retry loop with exponential backoff for transient failures
+    let maxRetries = 5;
+    let retryDelay = 500; // Start with 500ms
+
+    while (delivery.status !== "success" && delivery.attempts < maxRetries) {
       try {
         delivery.attempts += 1;
 
@@ -185,19 +186,24 @@ export const sendWebhookEvent = async (
         delivery.status = "success";
         delivery.delivered_at = new Date().toISOString();
 
-        console.log(`[WEBHOOK] delivered ${event}`);
+        console.log(`[WEBHOOK] delivered ${event} to ${webhook.url}`);
+        break;
       } catch (error: any) {
         const status = error?.response?.status;
 
         if (isTransientFailure(status)) {
           console.log(
-            `[WEBHOOK] transient ${status}, retry attempt ${delivery.attempts}`
+            `[WEBHOOK] transient ${status}, retry attempt ${delivery.attempts}/${maxRetries}`
           );
 
-          await sleep(1000);
+          if (delivery.attempts < maxRetries) {
+            await sleep(retryDelay);
+            retryDelay = Math.min(retryDelay * 2, 5000); // Exponential backoff, max 5s
+          }
           continue;
         }
 
+        // Non-transient failure
         delivery.status = "failed";
 
         console.log(
@@ -207,6 +213,12 @@ export const sendWebhookEvent = async (
 
         break;
       }
+    }
+
+    // Mark as failed if max retries exceeded
+    if (delivery.attempts >= maxRetries && delivery.status === "pending") {
+      delivery.status = "failed";
+      console.log(`[WEBHOOK] max retries exceeded for ${webhook.url}`);
     }
   }
 };

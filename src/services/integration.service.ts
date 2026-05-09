@@ -82,53 +82,69 @@ const buildSlackPayload = (
       ? username.trim()
       : "ProxyMaze";
 
+  const color = event === "alert.fired" ? "#E74C3C" : "#2ECC71";
+
+  const fields = [
+    { title: "Alert ID", value: String(alert.alert_id || "unknown") },
+    { title: "Failure Rate", value: String(alert.failure_rate ?? 0) },
+    { title: "Failed Proxies", value: String(alert.failed_proxies ?? 0) },
+    { title: "Threshold", value: String(alert.threshold ?? 0.2) },
+    {
+      title: "Failed IDs",
+      value:
+        alert.failed_proxy_ids && alert.failed_proxy_ids.length > 0
+          ? alert.failed_proxy_ids.join(", ")
+          : "None",
+    },
+  ];
+
+  // Add Fired At field (required by spec)
+  if (event === "alert.fired") {
+    fields.push({
+      title: "Fired At",
+      value: alert.fired_at || new Date().toISOString(),
+    });
+  }
+
   return {
     username: safeUsername,
-    text: `ProxyMaze ${event}: ${alert.message || "Alert event"}`,
+    text: `ProxyMaze ${event === "alert.fired" ? "Alert Fired" : "Alert Resolved"}: ${alert.message || "Alert event"}`,
     attachments: [
       {
-        color: event === "alert.fired" ? "#E74C3C" : "#2ECC71",
-        fields: [
-          { title: "Alert ID", value: alert.alert_id || "unknown" },
-          { title: "Failure Rate", value: String(alert.failure_rate ?? 0) },
-          { title: "Failed Proxies", value: String(alert.failed_proxies ?? 0) },
-          { title: "Threshold", value: String(alert.threshold ?? 0.2) },
-          {
-            title: "Failed IDs",
-            value:
-              alert.failed_proxy_ids && alert.failed_proxy_ids.length > 0
-                ? alert.failed_proxy_ids.join(", ")
-                : "None",
-          },
-          { title: "Fired At", value: alert.fired_at || "N/A" },
-        ],
+        color: color,
+        fields: fields,
         footer: "ProxyMaze Monitor",
-        ts: Math.floor(Date.now() / 1000),
+        ts: Math.floor(Date.now() / 1000), // Unix epoch timestamp as integer
       },
     ],
   };
 };
 
 const buildDiscordPayload = (event: string, alert: Alert) => {
+  // Red for fired, green for resolved
+  const color = event === "alert.fired" ? 15158332 : 3066993; // #E74C3C (15158332) and #2ECC71 (3066993)
+
+  const fields = [
+    { name: "Alert ID", value: String(alert.alert_id) },
+    { name: "Failure Rate", value: String(alert.failure_rate ?? 0) },
+    { name: "Failed Proxies", value: String(alert.failed_proxies ?? 0) },
+    { name: "Threshold", value: String(alert.threshold ?? 0.2) },
+    {
+      name: "Failed IDs",
+      value:
+        alert.failed_proxy_ids && alert.failed_proxy_ids.length > 0
+          ? alert.failed_proxy_ids.join(", ")
+          : "None",
+    },
+  ];
+
   return {
     embeds: [
       {
-        title: `ProxyMaze ${event}`,
-        description: alert.message || "Proxy alert triggered",
-        color: event === "alert.fired" ? 16711680 : 65280,
-        fields: [
-          { name: "Alert ID", value: String(alert.alert_id) },
-          { name: "Failure Rate", value: String(alert.failure_rate ?? 0) },
-          { name: "Failed Proxies", value: String(alert.failed_proxies ?? 0) },
-          { name: "Threshold", value: String(alert.threshold ?? 0.2) },
-          {
-            name: "Failed IDs",
-            value:
-              alert.failed_proxy_ids && alert.failed_proxy_ids.length > 0
-                ? alert.failed_proxy_ids.join(", ")
-                : "None",
-          },
-        ],
+        title: `ProxyMaze ${event === "alert.fired" ? "Alert Fired" : "Alert Resolved"}`,
+        description: alert.message || `Proxy pool alert: ${event}`,
+        color: color,
+        fields: fields,
         footer: {
           text: "ProxyMaze Monitor",
         },
@@ -236,6 +252,7 @@ export const sendIntegrationEvent = async (
   alert: Alert
 ): Promise<void> => {
   for (const integration of integrations) {
+    // Skip if integration doesn't have events specified or event is not in the list
     if (
       integration.events.length > 0 &&
       !integration.events.includes(event)
@@ -248,49 +265,65 @@ export const sendIntegrationEvent = async (
         ? buildSlackPayload(event, alert, integration.username)
         : buildDiscordPayload(event, alert);
 
-    try {
-      await postJsonWithRedirects(
-        integration.webhook_url,
-        payload,
-        5000
-      );
+    let maxRetries = 5;
+    let retryDelay = 500;
+    let attempts = 0;
+    let success = false;
 
-      console.log(`[INTEGRATION] ${integration.type} sent`);
-    } catch (error: any) {
-      const status = error?.response?.status;
+    while (attempts < maxRetries && !success) {
+      try {
+        attempts += 1;
 
-      if (status === 429) {
-        const retryAfter = parseRetryAfterSeconds(error);
-
-        console.log(
-          `[INTEGRATION] ${integration.type} rate limited. Retrying after ${retryAfter}s`
+        await postJsonWithRedirects(
+          integration.webhook_url,
+          payload,
+          5000
         );
 
-        await sleep(retryAfter * 1000);
+        console.log(`[INTEGRATION] ${integration.type} sent successfully`);
+        success = true;
+      } catch (error: any) {
+        const status = error?.response?.status;
 
-        try {
-          await postJsonWithRedirects(
-            integration.webhook_url,
-            payload,
-            5000
-          );
+        // Handle rate limiting
+        if (status === 429) {
+          const retryAfter = parseRetryAfterSeconds(error);
 
           console.log(
-            `[INTEGRATION] ${integration.type} sent after retry`
+            `[INTEGRATION] ${integration.type} rate limited (429). Retrying after ${retryAfter}s`
           );
-          continue;
-        } catch (retryError: any) {
-          console.log(
-            `[INTEGRATION] ${integration.type} retry failed`,
-            retryError?.response?.status || retryError?.message
-          );
+
+          if (attempts < maxRetries) {
+            await sleep(retryAfter * 1000);
+          }
           continue;
         }
-      }
 
+        // Handle transient failures (5xx)
+        if ([500, 502, 503, 504].includes(status)) {
+          console.log(
+            `[INTEGRATION] ${integration.type} transient failure (${status}), attempt ${attempts}/${maxRetries}`
+          );
+
+          if (attempts < maxRetries) {
+            await sleep(retryDelay);
+            retryDelay = Math.min(retryDelay * 2, 5000);
+          }
+          continue;
+        }
+
+        // Non-transient failure
+        console.log(
+          `[INTEGRATION] ${integration.type} failed`,
+          status || error?.message
+        );
+        break;
+      }
+    }
+
+    if (!success && attempts >= maxRetries) {
       console.log(
-        `[INTEGRATION] ${integration.type} failed`,
-        status || error?.message
+        `[INTEGRATION] ${integration.type} failed after ${maxRetries} attempts`
       );
     }
   }
