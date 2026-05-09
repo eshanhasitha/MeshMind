@@ -3,8 +3,16 @@ import { v4 as uuidv4 } from "uuid";
 import { Alert } from "../models/alert.model";
 
 import { getAllProxies } from "./proxy.service";
-import { sendWebhookEvent } from "./webhook.service";
-import { sendIntegrationEvent } from "./integration.service";
+
+import {
+  sendWebhookEvent,
+} from "./webhook.service";
+
+import {
+  sendIntegrationEvent,
+} from "./integration.service";
+
+const getWebhooks = (): unknown[] => [];
 
 let alerts: Alert[] = [];
 
