@@ -17,9 +17,11 @@ export const listAlerts = (
     const alerts =
       getAlerts();
 
-    return res.status(200).json(
-      alerts
-    );
+    return res.status(200).json({
+      total:
+        alerts.length,
+      alerts,
+    });
 
   } catch (error) {
 
