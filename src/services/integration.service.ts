@@ -26,22 +26,27 @@ export const getIntegrations = (): Integration[] => {
   return integrations;
 };
 
-const buildSlackPayload = (event: string, alert: Alert, username?: string) => {
+const buildSlackPayload = (
+  event: string,
+  alert: Alert,
+  username?: string
+) => {
   return {
     username: username || "ProxyMaze",
-    text: `ProxyMaze ${event}`,
+    text: `ProxyMaze ${event}: ${alert.message}`,
     attachments: [
       {
-        title: event,
-        text: alert.message,
+        color: event === "alert.fired" ? "#E74C3C" : "#2ECC71",
         fields: [
           { title: "Alert ID", value: alert.alert_id, short: false },
-          { title: "Status", value: alert.status, short: true },
           { title: "Failure Rate", value: String(alert.failure_rate), short: true },
-          { title: "Failed Proxies", value: alert.failed_proxy_ids.join(", ") || "None", short: false },
+          { title: "Failed Proxies", value: String(alert.failed_proxies), short: true },
           { title: "Threshold", value: String(alert.threshold), short: true },
-          { title: "Fired At", value: alert.fired_at, short: false },
+          { title: "Failed IDs", value: alert.failed_proxy_ids.join(", ") || "None", short: false },
+          { title: "Fired At", value: alert.fired_at || "N/A", short: false },
         ],
+        footer: "ProxyMaze Monitor",
+        ts: Math.floor(Date.now() / 1000),
       },
     ],
   };
@@ -49,20 +54,44 @@ const buildSlackPayload = (event: string, alert: Alert, username?: string) => {
 
 const buildDiscordPayload = (event: string, alert: Alert) => {
   return {
+    username: "ProxyMaze",
     embeds: [
       {
         title: `ProxyMaze ${event}`,
-        description: alert.message,
+        description: alert.message || `ProxyMaze ${event}`,
         color: event === "alert.fired" ? 15158332 : 3066993,
         fields: [
-          { name: "Alert ID", value: alert.alert_id },
-          { name: "Status", value: alert.status, inline: true },
-          { name: "Failure Rate", value: String(alert.failure_rate), inline: true },
-          { name: "Threshold", value: String(alert.threshold), inline: true },
-          { name: "Failed Proxy IDs", value: alert.failed_proxy_ids.join(", ") || "None" },
+          {
+            name: "Alert ID",
+            value: alert.alert_id || "unknown",
+            inline: false,
+          },
+          {
+            name: "Failure Rate",
+            value: String(alert.failure_rate ?? 0),
+            inline: true,
+          },
+          {
+            name: "Failed Proxies",
+            value: String(alert.failed_proxies ?? 0),
+            inline: true,
+          },
+          {
+            name: "Threshold",
+            value: String(alert.threshold ?? 0.2),
+            inline: true,
+          },
+          {
+            name: "Failed IDs",
+            value:
+              alert.failed_proxy_ids && alert.failed_proxy_ids.length > 0
+                ? alert.failed_proxy_ids.join(", ")
+                : "None",
+            inline: false,
+          },
         ],
         footer: {
-          text: `Fired at ${alert.fired_at}`,
+          text: "ProxyMaze Monitor",
         },
       },
     ],
@@ -80,36 +109,28 @@ export const sendIntegrationEvent = async (
         : buildDiscordPayload(event, alert);
 
     try {
-      await axios.post(integration.webhook_url, payload);
+      await axios.post(integration.webhook_url, payload, {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        timeout: 5000,
+      });
 
       console.log(`✅ ${integration.type} integration sent`);
     } catch (error: any) {
+      const status = error?.response?.status;
 
-    const status =
-        error?.response?.status;
+      if (status === 429) {
+        const retryAfter = error?.response?.data?.retry_after || 30;
 
-    /*
-    Discord rate limit
-    */
-    if (status === 429) {
-
-        const retryAfter =
-        error?.response?.data?.retry_after || 30;
-
-        console.log(
-        `⏳ Discord rate limited. Retry after ${retryAfter}s`
-        );
-
+        console.log(`⏳ Integration rate limited. Retry after ${retryAfter}s`);
         return;
-    }
+      }
 
-    /*
-    Clean error log
-    */
-    console.log(
+      console.log(
         `❌ ${integration.type} integration failed:`,
         status || error?.message
-    );
+      );
     }
   }
 };

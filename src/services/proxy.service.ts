@@ -84,17 +84,10 @@ export const getProxyById = (
 /*
  Clear proxies
 */
-export const clearProxies =
-  (): void => {
-
-    db.prepare(
-      "DELETE FROM proxies"
-    ).run();
-
-    db.prepare(
-      "DELETE FROM proxy_history"
-    ).run();
-  };
+export const clearProxies = (): void => {
+  db.prepare("DELETE FROM proxies").run();
+  db.prepare("DELETE FROM proxy_history").run();
+};
 
 /*
  Add proxies

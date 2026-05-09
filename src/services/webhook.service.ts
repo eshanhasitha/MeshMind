@@ -1,200 +1,112 @@
-import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
+import { v4 as uuidv4 } from "uuid";
 
-/*
- Send webhook event
-*/
-interface WebhookDelivery {
-  id: string;
-  webhook_url: string;
-  event: string;
-  status: "pending" | "success" | "failed";
-  attempts: number;
-  delivered_at: string | null;
-}
+import {
+  Webhook,
+  WebhookDelivery,
+} from "../models/webhook.model";
 
-const retryableStatuses = [
-  408,
-  425,
-  429,
-  500,
-  502,
-  503,
-  504,
-];
+let webhooks: Webhook[] = [];
+let deliveries: WebhookDelivery[] = [];
 
-export const sendWebhookEvent =
-  async (
-    event: string,
-    alert: any
-  ): Promise<void> => {
+export const getWebhooks = (): Webhook[] => {
+  return webhooks;
+};
 
-    const deliveries: WebhookDelivery[] = [];
-    const webhooks =
-      Array.isArray((alert as any)?.webhooks)
-        ? (alert as any).webhooks
-        : (alert as any)?.webhook
-          ? [(alert as any).webhook]
-          : [];
+export const getDeliveries = (): WebhookDelivery[] => {
+  return deliveries;
+};
 
-    for (const webhook of webhooks) {
+export const addWebhook = (url: string): Webhook => {
+  const webhook: Webhook = {
+    id: uuidv4(),
+    url,
+    created_at: new Date().toISOString(),
+  };
 
-      /*
-       Prevent duplicate success
-      */
-      const existing =
-        deliveries.find(
-          (delivery) =>
-            delivery.webhook_url === webhook.url &&
-            delivery.event === event &&
-            delivery.status === "success"
-        );
+  webhooks.push(webhook);
 
-      if (existing) {
-        continue;
-      }
+  return webhook;
+};
 
-      /*
-       REQUIRED payload contract
-      */
-      const payload =
-        event === "alert.fired"
-          ? {
-              event,
+const sleep = (ms: number) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
-              alert_id:
-                alert.alert_id,
+export const sendWebhookEvent = async (
+  event: string,
+  payload: any
+): Promise<void> => {
+  const alertId = payload.alert_id;
 
-              failure_rate:
-                alert.failure_rate,
+  for (const webhook of webhooks) {
+    const existingSuccess = deliveries.find(
+      (delivery: any) =>
+        delivery.webhook_url === webhook.url &&
+        delivery.event === event &&
+        delivery.alert_id === alertId &&
+        delivery.status === "success"
+    );
 
-              fired_at:
-                alert.fired_at,
-            }
-          : {
-              event,
+    if (existingSuccess) {
+      continue;
+    }
 
-              alert_id:
-                alert.alert_id,
+    const delivery: any = {
+      id: uuidv4(),
+      webhook_url: webhook.url,
+      event,
+      alert_id: alertId,
+      status: "pending",
+      attempts: 0,
+      delivered_at: null,
+    };
 
-              resolved_at:
-                alert.resolved_at,
-            };
+    deliveries.push(delivery);
 
-      const delivery:
-        WebhookDelivery = {
-          id: uuidv4(),
+    while (
+      delivery.status !== "success" &&
+      delivery.attempts < 10
+    ) {
+      try {
+        delivery.attempts += 1;
 
-          webhook_url:
-            webhook.url,
+        await axios.post(webhook.url, payload, {
+          headers: {
+            "Content-Type": "application/json",
+          },
+          timeout: 5000,
+        });
 
-          event,
+        delivery.status = "success";
+        delivery.delivered_at = new Date().toISOString();
 
-          status: "pending",
+        console.log(`📨 Webhook delivered: ${event}`);
+      } catch (error: any) {
+        const status = error?.response?.status;
 
-          attempts: 0,
-
-          delivered_at: null,
-        };
-
-      deliveries.push(delivery);
-
-      let delivered = false;
-
-      const maxRetries = 3;
-
-      while (
-        !delivered &&
-        delivery.attempts < maxRetries
-      ) {
-
-        try {
-
-          delivery.attempts += 1;
-
-          const response =
-            await axios.post(
-              webhook.url,
-              payload,
-              {
-                timeout: 5000,
-              }
-            );
-
-          /*
-           Success
-          */
-          if (
-            response.status >= 200 &&
-            response.status < 300
-          ) {
-
-            delivery.status =
-              "success";
-
-            delivery.delivered_at =
-              new Date().toISOString();
-
-            delivered = true;
-
-            console.log(
-              `📨 Webhook delivered -> ${webhook.url}`
-            );
-
-            break;
-          }
-
-          /*
-           Retry only allowed statuses
-          */
-          if (
-            retryableStatuses.includes(
-              response.status
-            )
-          ) {
-
-            console.log(
-              `🔁 Webhook retry...`
-            );
-
-            continue;
-          }
-
-          /*
-           Permanent failure
-          */
-          delivery.status = "failed";
-
-          delivered = true;
-
-        } catch (error: any) {
-
-          const status =
-            error?.response?.status;
-
-          /*
-           Retry allowed errors
-          */
-          if (
-            retryableStatuses.includes(status)
-          ) {
-
-            console.log(
-              `🔁 Webhook retry...`
-            );
-
-            continue;
-          }
-
-          delivery.status = "failed";
-
+        if ([500, 502, 503, 504].includes(status)) {
           console.log(
-            "❌ Webhook failed:",
-            status || error?.message
+            `🔁 Webhook retry ${status}, attempt ${delivery.attempts}`
           );
 
-          delivered = true;
+          await sleep(2000);
+          continue;
         }
+
+        delivery.status = "failed";
+
+        console.log(
+          "❌ Webhook failed:",
+          status || error?.message
+        );
+
+        break;
       }
     }
-  };
+
+    if (delivery.status !== "success") {
+      delivery.status = "failed";
+      console.log("❌ Webhook max retries exceeded");
+    }
+  }
+};
