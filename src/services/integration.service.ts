@@ -89,19 +89,18 @@ const buildSlackPayload = (
       {
         color: event === "alert.fired" ? "#E74C3C" : "#2ECC71",
         fields: [
-          { title: "Alert ID", value: alert.alert_id || "unknown", short: false },
-          { title: "Failure Rate", value: String(alert.failure_rate ?? 0), short: true },
-          { title: "Failed Proxies", value: String(alert.failed_proxies ?? 0), short: true },
-          { title: "Threshold", value: String(alert.threshold ?? 0.2), short: true },
+          { title: "Alert ID", value: alert.alert_id || "unknown" },
+          { title: "Failure Rate", value: String(alert.failure_rate ?? 0) },
+          { title: "Failed Proxies", value: String(alert.failed_proxies ?? 0) },
+          { title: "Threshold", value: String(alert.threshold ?? 0.2) },
           {
             title: "Failed IDs",
             value:
               alert.failed_proxy_ids && alert.failed_proxy_ids.length > 0
                 ? alert.failed_proxy_ids.join(", ")
                 : "None",
-            short: false,
           },
-          { title: "Fired At", value: alert.fired_at || "N/A", short: false },
+          { title: "Fired At", value: alert.fired_at || "N/A" },
         ],
         footer: "ProxyMaze Monitor",
         ts: Math.floor(Date.now() / 1000),
@@ -112,24 +111,22 @@ const buildSlackPayload = (
 
 const buildDiscordPayload = (event: string, alert: Alert) => {
   return {
-    content: `ProxyMaze ${event}`,
     embeds: [
       {
         title: `ProxyMaze ${event}`,
         description: alert.message || "Proxy alert triggered",
         color: event === "alert.fired" ? 16711680 : 65280,
         fields: [
-          { name: "Alert ID", value: String(alert.alert_id), inline: false },
-          { name: "Failure Rate", value: String(alert.failure_rate ?? 0), inline: true },
-          { name: "Failed Proxies", value: String(alert.failed_proxies ?? 0), inline: true },
-          { name: "Threshold", value: String(alert.threshold ?? 0.2), inline: true },
+          { name: "Alert ID", value: String(alert.alert_id) },
+          { name: "Failure Rate", value: String(alert.failure_rate ?? 0) },
+          { name: "Failed Proxies", value: String(alert.failed_proxies ?? 0) },
+          { name: "Threshold", value: String(alert.threshold ?? 0.2) },
           {
             name: "Failed IDs",
             value:
               alert.failed_proxy_ids && alert.failed_proxy_ids.length > 0
                 ? alert.failed_proxy_ids.join(", ")
                 : "None",
-            inline: false,
           },
         ],
         footer: {
