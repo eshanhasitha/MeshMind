@@ -1,7 +1,12 @@
 import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
+
+import {
+  Integration,
+  IntegrationType,
+} from "../models/integration.model";
+
 import { Alert } from "../models/alert.model";
-import { Integration, IntegrationType } from "../models/integration.model";
 
 let integrations: Integration[] = [];
 
@@ -9,7 +14,7 @@ export const addIntegration = (
   type: IntegrationType,
   webhook_url: string,
   username?: string,
-  events?: string[]
+  events: string[] = []
 ): Integration => {
   const integration: Integration = {
     id: uuidv4(),
@@ -21,6 +26,7 @@ export const addIntegration = (
   };
 
   integrations.push(integration);
+
   return integration;
 };
 
@@ -35,16 +41,23 @@ const buildSlackPayload = (
 ) => {
   return {
     username: username || "ProxyMaze",
-    text: `ProxyMaze ${event}: ${alert.message}`,
+    text: `ProxyMaze ${event}: ${alert.message || "Alert event"}`,
     attachments: [
       {
         color: event === "alert.fired" ? "#E74C3C" : "#2ECC71",
         fields: [
-          { title: "Alert ID", value: alert.alert_id, short: false },
-          { title: "Failure Rate", value: String(alert.failure_rate), short: true },
-          { title: "Failed Proxies", value: String(alert.failed_proxies), short: true },
-          { title: "Threshold", value: String(alert.threshold), short: true },
-          { title: "Failed IDs", value: alert.failed_proxy_ids.join(", ") || "None", short: false },
+          { title: "Alert ID", value: alert.alert_id || "unknown", short: false },
+          { title: "Failure Rate", value: String(alert.failure_rate ?? 0), short: true },
+          { title: "Failed Proxies", value: String(alert.failed_proxies ?? 0), short: true },
+          { title: "Threshold", value: String(alert.threshold ?? 0.2), short: true },
+          {
+            title: "Failed IDs",
+            value:
+              alert.failed_proxy_ids && alert.failed_proxy_ids.length > 0
+                ? alert.failed_proxy_ids.join(", ")
+                : "None",
+            short: false,
+          },
           { title: "Fired At", value: alert.fired_at || "N/A", short: false },
         ],
         footer: "ProxyMaze Monitor",
@@ -54,7 +67,10 @@ const buildSlackPayload = (
   };
 };
 
-const buildDiscordPayload = (event: string, alert: Alert) => {
+const buildDiscordPayload = (
+  event: string,
+  alert: Alert
+) => {
   return {
     username: "ProxyMaze",
     embeds: [
@@ -106,7 +122,7 @@ export const sendIntegrationEvent = async (
 ): Promise<void> => {
   for (const integration of integrations) {
     if (
-      integration.events &&
+      integration.events.length > 0 &&
       !integration.events.includes(event)
     ) {
       continue;
@@ -127,18 +143,9 @@ export const sendIntegrationEvent = async (
 
       console.log(`✅ ${integration.type} integration sent`);
     } catch (error: any) {
-      const status = error?.response?.status;
-
-      if (status === 429) {
-        const retryAfter = error?.response?.data?.retry_after || 30;
-
-        console.log(`⏳ Integration rate limited. Retry after ${retryAfter}s`);
-        return;
-      }
-
       console.log(
-        `❌ ${integration.type} integration failed:`,
-        status || error?.message
+        `❌ ${integration.type} integration failed`,
+        error?.response?.status || error?.message
       );
     }
   }

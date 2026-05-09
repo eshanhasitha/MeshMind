@@ -3,16 +3,8 @@ import { v4 as uuidv4 } from "uuid";
 import { Alert } from "../models/alert.model";
 
 import { getAllProxies } from "./proxy.service";
-
-import {
-  sendWebhookEvent,
-} from "./webhook.service";
-
-import {
-  sendIntegrationEvent,
-} from "./integration.service";
-
-const getWebhooks = (): unknown[] => [];
+import { sendWebhookEvent } from "./webhook.service";
+import { sendIntegrationEvent } from "./integration.service";
 
 let alerts: Alert[] = [];
 
@@ -20,12 +12,37 @@ const ALERT_THRESHOLD = 0.2;
 
 let evaluating = false;
 
+const firedWebhookSent = new Set<string>();
+const resolvedWebhookSent = new Set<string>();
+
 export const getAlerts = (): Alert[] => {
   return alerts;
 };
 
 export const getActiveAlert = (): Alert | undefined => {
   return alerts.find((alert) => alert.status === "active");
+};
+
+const buildFiredPayload = (alert: Alert) => {
+  return {
+    event: "alert.fired",
+    alert_id: alert.alert_id,
+    fired_at: alert.fired_at,
+    failure_rate: alert.failure_rate,
+    total_proxies: alert.total_proxies,
+    failed_proxies: alert.failed_proxies,
+    failed_proxy_ids: alert.failed_proxy_ids,
+    threshold: alert.threshold,
+    message: alert.message,
+  };
+};
+
+const buildResolvedPayload = (alert: Alert) => {
+  return {
+    event: "alert.resolved",
+    alert_id: alert.alert_id,
+    resolved_at: alert.resolved_at,
+  };
 };
 
 export const evaluateAlerts = async (): Promise<void> => {
@@ -37,40 +54,76 @@ export const evaluateAlerts = async (): Promise<void> => {
 
   try {
     const proxies = getAllProxies();
+
     const total = proxies.length;
+
     const activeAlert = getActiveAlert();
 
     if (total === 0) {
-      if (activeAlert) {
+      if (
+        activeAlert &&
+        !resolvedWebhookSent.has(activeAlert.alert_id)
+      ) {
         activeAlert.status = "resolved";
         activeAlert.resolved_at = new Date().toISOString();
 
-        await Promise.all([
-          sendWebhookEvent("alert.resolved", {
-            event: "alert.resolved",
-            alert_id: activeAlert.alert_id,
-            resolved_at: activeAlert.resolved_at,
-          }),
+        resolvedWebhookSent.add(activeAlert.alert_id);
 
-          sendIntegrationEvent("alert.resolved", activeAlert),
-        ]);
+        sendWebhookEvent(
+          "alert.resolved",
+          buildResolvedPayload(activeAlert)
+        );
+
+        sendIntegrationEvent(
+          "alert.resolved",
+          activeAlert
+        );
       }
 
       return;
     }
 
-    const failed = proxies.filter((proxy) => proxy.status === "down");
-    const failedCount = failed.length;
-    const failureRate = Number((failedCount / total).toFixed(2));
+    const failed = proxies.filter(
+      (proxy) => proxy.status === "down"
+    );
 
-    if (failureRate >= ALERT_THRESHOLD && !activeAlert) {
+    const failedCount = failed.length;
+
+    const failureRate = Number(
+      (failedCount / total).toFixed(2)
+    );
+
+    const failedProxyIds = failed.map(
+      (proxy) => proxy.id
+    );
+
+    /*
+     Persistent breach:
+     keep SAME active alert.
+     Do NOT send duplicate alert.fired webhook.
+    */
+    if (
+      failureRate >= ALERT_THRESHOLD &&
+      activeAlert
+    ) {
+      return;
+    }
+
+    /*
+     New breach:
+     create exactly one active alert.
+    */
+    if (
+      failureRate >= ALERT_THRESHOLD &&
+      !activeAlert
+    ) {
       const newAlert: Alert = {
         alert_id: uuidv4(),
         status: "active",
         failure_rate: failureRate,
         total_proxies: total,
         failed_proxies: failedCount,
-        failed_proxy_ids: failed.map((proxy) => proxy.id),
+        failed_proxy_ids: failedProxyIds,
         threshold: ALERT_THRESHOLD,
         fired_at: new Date().toISOString(),
         resolved_at: null,
@@ -79,52 +132,47 @@ export const evaluateAlerts = async (): Promise<void> => {
 
       alerts.push(newAlert);
 
-      await Promise.all([
-        sendWebhookEvent("alert.fired", {
-          event: "alert.fired",
-          alert_id: newAlert.alert_id,
-          fired_at: newAlert.fired_at,
-          failure_rate: newAlert.failure_rate,
-          total_proxies: newAlert.total_proxies,
-          failed_proxies: newAlert.failed_proxies,
-          failed_proxy_ids: newAlert.failed_proxy_ids,
-          threshold: newAlert.threshold,
-          message: newAlert.message,
-        }),
+      if (!firedWebhookSent.has(newAlert.alert_id)) {
+        firedWebhookSent.add(newAlert.alert_id);
 
-        sendIntegrationEvent("alert.fired", newAlert),
-      ]);
+        sendWebhookEvent(
+          "alert.fired",
+          buildFiredPayload(newAlert)
+        );
 
-      console.log(`[ALERT] fired ${newAlert.alert_id}`);
-      return;
-    }
-
-    if (failureRate >= ALERT_THRESHOLD && activeAlert) {
-      activeAlert.failure_rate = failureRate;
-      activeAlert.total_proxies = total;
-      activeAlert.failed_proxies = failedCount;
-      activeAlert.failed_proxy_ids = failed.map((proxy) => proxy.id);
-      activeAlert.threshold = ALERT_THRESHOLD;
-      activeAlert.message = "Proxy pool failure rate exceeded threshold";
+        sendIntegrationEvent(
+          "alert.fired",
+          newAlert
+        );
+      }
 
       return;
     }
 
-    if (failureRate < ALERT_THRESHOLD && activeAlert) {
+    /*
+     Recovery:
+     resolve active alert once.
+    */
+    if (
+      failureRate < ALERT_THRESHOLD &&
+      activeAlert
+    ) {
       activeAlert.status = "resolved";
       activeAlert.resolved_at = new Date().toISOString();
 
-      await Promise.all([
-        sendWebhookEvent("alert.resolved", {
-          event: "alert.resolved",
-          alert_id: activeAlert.alert_id,
-          resolved_at: activeAlert.resolved_at,
-        }),
+      if (!resolvedWebhookSent.has(activeAlert.alert_id)) {
+        resolvedWebhookSent.add(activeAlert.alert_id);
 
-        sendIntegrationEvent("alert.resolved", activeAlert),
-      ]);
+        sendWebhookEvent(
+          "alert.resolved",
+          buildResolvedPayload(activeAlert)
+        );
 
-      console.log(`[ALERT] resolved ${activeAlert.alert_id}`);
+        sendIntegrationEvent(
+          "alert.resolved",
+          activeAlert
+        );
+      }
     }
   } finally {
     evaluating = false;

@@ -19,19 +19,31 @@ const checkProxy = async (
 
     const response = await axios.get(proxyUrl, {
       timeout: config.request_timeout_ms,
+
+      /*
+       Important:
+       Do not throw for 5xx.
+       We classify all statuses ourselves.
+      */
       validateStatus: () => true,
     });
 
+    /*
+     2xx => UP
+    */
     if (response.status >= 200 && response.status < 300) {
       return "up";
     }
 
-    if (response.status >= 500) {
-      return "down";
-    }
-
-    return "up";
-  } catch (error: any) {
+    /*
+     3xx, 4xx, 5xx => DOWN
+     Required: all 5xx must be down.
+    */
+    return "down";
+  } catch (error) {
+    /*
+     Timeout, DNS failure, connection refused => DOWN
+    */
     return "down";
   }
 };
@@ -50,8 +62,5 @@ export const monitorAllProxies = async (): Promise<void> => {
     console.log(`[MONITOR] ${proxy.id} => ${status}`);
   }
 
-  /*
-   Evaluate alerts
-  */
   await evaluateAlerts();
 };
