@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
 
 /*
- Send webhook event
+ Webhook delivery type
 */
 interface WebhookDelivery {
   id: string;
@@ -13,6 +13,14 @@ interface WebhookDelivery {
   delivered_at: string | null;
 }
 
+/*
+ Persistent deliveries
+*/
+const deliveries: WebhookDelivery[] = [];
+
+/*
+ Retryable HTTP codes
+*/
 const retryableStatuses = [
   408,
   425,
@@ -23,13 +31,40 @@ const retryableStatuses = [
   504,
 ];
 
+/*
+ Persistent webhooks
+*/
+const webhooks: { id: string; url: string; created_at: string }[] = [];
+
+/*
+ Add webhook
+*/
+export const addWebhook = (url: string) => {
+  const webhook = {
+    id: uuidv4(),
+    url,
+    created_at: new Date().toISOString(),
+  };
+  webhooks.push(webhook);
+  return webhook;
+};
+
+/*
+ Get webhooks
+*/
+export const getWebhooks = () => {
+  return webhooks;
+};
+
+/*
+ Send webhook event
+*/
 export const sendWebhookEvent =
   async (
     event: string,
     alert: any
   ): Promise<void> => {
 
-    const deliveries: WebhookDelivery[] = [];
     const webhooks =
       Array.isArray((alert as any)?.webhooks)
         ? (alert as any).webhooks
@@ -55,32 +90,45 @@ export const sendWebhookEvent =
       }
 
       /*
-       REQUIRED payload contract
+       REQUIRED evaluator payload
       */
-      const payload =
-        event === "alert.fired"
-          ? {
-              event,
+      const payload = {
+        event,
 
-              alert_id:
-                alert.alert_id,
+        alert_id:
+          alert.alert_id,
 
-              failure_rate:
-                alert.failure_rate,
+        status:
+          alert.status,
 
-              fired_at:
-                alert.fired_at,
-            }
-          : {
-              event,
+        failure_rate:
+          alert.failure_rate,
 
-              alert_id:
-                alert.alert_id,
+        total_proxies:
+          alert.total_proxies,
 
-              resolved_at:
-                alert.resolved_at,
-            };
+        failed_proxies:
+          alert.failed_proxies,
 
+        failed_proxy_ids:
+          alert.failed_proxy_ids,
+
+        threshold_value:
+          alert.threshold,
+
+        fired_at:
+          alert.fired_at,
+
+        resolved_at:
+          alert.resolved_at || null,
+
+        message:
+          alert.message,
+      };
+
+      /*
+       Create delivery
+      */
       const delivery:
         WebhookDelivery = {
           id: uuidv4(),
@@ -145,7 +193,7 @@ export const sendWebhookEvent =
           }
 
           /*
-           Retry only allowed statuses
+           Retry allowed codes
           */
           if (
             retryableStatuses.includes(
@@ -154,7 +202,12 @@ export const sendWebhookEvent =
           ) {
 
             console.log(
-              `🔁 Webhook retry...`
+              "🔁 Webhook retry..."
+            );
+
+            await new Promise(
+              (resolve) =>
+                setTimeout(resolve, 2000)
             );
 
             continue;
@@ -163,7 +216,8 @@ export const sendWebhookEvent =
           /*
            Permanent failure
           */
-          delivery.status = "failed";
+          delivery.status =
+            "failed";
 
           delivered = true;
 
@@ -180,13 +234,22 @@ export const sendWebhookEvent =
           ) {
 
             console.log(
-              `🔁 Webhook retry...`
+              "🔁 Webhook retry..."
+            );
+
+            await new Promise(
+              (resolve) =>
+                setTimeout(resolve, 2000)
             );
 
             continue;
           }
 
-          delivery.status = "failed";
+          /*
+           Failure
+          */
+          delivery.status =
+            "failed";
 
           console.log(
             "❌ Webhook failed:",
@@ -197,4 +260,12 @@ export const sendWebhookEvent =
         }
       }
     }
+  };
+
+/*
+ Get deliveries
+*/
+export const getDeliveries =
+  (): WebhookDelivery[] => {
+    return deliveries;
   };
