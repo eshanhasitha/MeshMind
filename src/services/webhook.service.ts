@@ -1,75 +1,41 @@
+import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
 
-import { v4 as uuidv4 } from "uuid";
-
-import {
-  Webhook,
-  WebhookDelivery,
-} from "../models/webhook.model";
-
 /*
- Storage
+ Send webhook event
 */
-let webhooks: Webhook[] = [];
+interface WebhookDelivery {
+  id: string;
+  webhook_url: string;
+  event: string;
+  status: "pending" | "success" | "failed";
+  attempts: number;
+  delivered_at: string | null;
+}
 
-let deliveries:
-  WebhookDelivery[] = [];
-
-/*
- Get webhooks
-*/
-export const getWebhooks =
-  (): Webhook[] => {
-    return webhooks;
-  };
-
-/*
- Get deliveries
-*/
-export const getDeliveries =
-  (): WebhookDelivery[] => {
-    return deliveries;
-  };
-
-/*
- Add webhook
-*/
-export const addWebhook = (
-  url: string
-): Webhook => {
-
-  const webhook: Webhook = {
-    id: uuidv4(),
-
-    url,
-
-    created_at:
-      new Date().toISOString(),
-  };
-
-  webhooks.push(webhook);
-
-  return webhook;
-};
-
-/*
- Retryable statuses
-*/
 const retryableStatuses = [
+  408,
+  425,
+  429,
   500,
   502,
   503,
   504,
 ];
 
-/*
- Send webhook event
-*/
 export const sendWebhookEvent =
   async (
     event: string,
-    payload: any
+    alert: any
   ): Promise<void> => {
+
+    const deliveries: WebhookDelivery[] = [];
+    const webhooks =
+      Array.isArray((alert as any)?.webhooks)
+        ? (alert as any).webhooks
+        : (alert as any)?.webhook
+          ? [(alert as any).webhook]
+          : [];
 
     for (const webhook of webhooks) {
 
@@ -79,17 +45,41 @@ export const sendWebhookEvent =
       const existing =
         deliveries.find(
           (delivery) =>
-            delivery.webhook_url ===
-              webhook.url &&
-            delivery.event ===
-              event &&
-            delivery.status ===
-              "success"
+            delivery.webhook_url === webhook.url &&
+            delivery.event === event &&
+            delivery.status === "success"
         );
 
       if (existing) {
         continue;
       }
+
+      /*
+       REQUIRED payload contract
+      */
+      const payload =
+        event === "alert.fired"
+          ? {
+              event,
+
+              alert_id:
+                alert.alert_id,
+
+              failure_rate:
+                alert.failure_rate,
+
+              fired_at:
+                alert.fired_at,
+            }
+          : {
+              event,
+
+              alert_id:
+                alert.alert_id,
+
+              resolved_at:
+                alert.resolved_at,
+            };
 
       const delivery:
         WebhookDelivery = {
@@ -107,16 +97,16 @@ export const sendWebhookEvent =
           delivered_at: null,
         };
 
-      deliveries.push(
-        delivery
-      );
+      deliveries.push(delivery);
 
       let delivered = false;
 
-      /*
-       Retry until success
-      */
-      while (!delivered) {
+      const maxRetries = 3;
+
+      while (
+        !delivered &&
+        delivery.attempts < maxRetries
+      ) {
 
         try {
 
@@ -125,15 +115,17 @@ export const sendWebhookEvent =
           const response =
             await axios.post(
               webhook.url,
-              payload
+              payload,
+              {
+                timeout: 5000,
+              }
             );
 
           /*
            Success
           */
           if (
-            response.status >=
-              200 &&
+            response.status >= 200 &&
             response.status < 300
           ) {
 
@@ -153,7 +145,7 @@ export const sendWebhookEvent =
           }
 
           /*
-           Retryable
+           Retry only allowed statuses
           */
           if (
             retryableStatuses.includes(
@@ -162,7 +154,7 @@ export const sendWebhookEvent =
           ) {
 
             console.log(
-              `🔁 Retrying webhook...`
+              `🔁 Webhook retry...`
             );
 
             continue;
@@ -171,17 +163,34 @@ export const sendWebhookEvent =
           /*
            Permanent failure
           */
-          delivery.status =
-            "failed";
+          delivery.status = "failed";
 
           delivered = true;
 
         } catch (error: any) {
+
+          const status =
+            error?.response?.status;
+
+          /*
+           Retry allowed errors
+          */
+          if (
+            retryableStatuses.includes(status)
+          ) {
+
+            console.log(
+              `🔁 Webhook retry...`
+            );
+
+            continue;
+          }
+
           delivery.status = "failed";
 
           console.log(
             "❌ Webhook failed:",
-            error?.response?.status || error?.message
+            status || error?.message
           );
 
           delivered = true;

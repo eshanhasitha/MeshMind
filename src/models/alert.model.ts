@@ -1,12 +1,16 @@
-export type AlertStatus =
-  | "active"
-  | "resolved";
+// export type AlertStatus =
+//   | "active"
+//   | "resolved";
 
 export interface Alert {
 
+  
+
   alert_id: string;
 
-  status: AlertStatus;
+  status:
+    | "active"
+    | "resolved";
 
   failure_rate: number;
 
@@ -16,7 +20,7 @@ export interface Alert {
 
   failed_proxy_ids: string[];
 
-  threshold: number;
+  threshold_value: number;
 
   fired_at: string;
 
