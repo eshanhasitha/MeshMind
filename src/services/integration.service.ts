@@ -26,13 +26,15 @@ export const addIntegration = (
   };
 
   integrations.push(integration);
-
   return integration;
 };
 
 export const getIntegrations = (): Integration[] => {
   return integrations;
 };
+
+const sleep = (ms: number) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 const buildSlackPayload = (
   event: string,
@@ -67,63 +69,32 @@ const buildSlackPayload = (
   };
 };
 
-const buildDiscordPayload = (
-  event: string,
-  alert: Alert
-) => {
+const buildDiscordPayload = (event: string, alert: Alert) => {
   return {
     content: `ProxyMaze ${event}`,
-
     embeds: [
       {
         title: `ProxyMaze ${event}`,
-
-        description:
-          alert.message ||
-          "Proxy alert triggered",
-
-        color:
-          event === "alert.fired"
-            ? 16711680
-            : 65280,
-
+        description: alert.message || "Proxy alert triggered",
+        color: event === "alert.fired" ? 16711680 : 65280,
         fields: [
-          {
-            name: "Alert ID",
-            value: String(alert.alert_id),
-            inline: false,
-          },
-          {
-            name: "Failure Rate",
-            value: String(alert.failure_rate),
-            inline: true,
-          },
-          {
-            name: "Failed Proxies",
-            value: String(alert.failed_proxies),
-            inline: true,
-          },
-          {
-            name: "Threshold",
-            value: String(alert.threshold),
-            inline: true,
-          },
+          { name: "Alert ID", value: String(alert.alert_id), inline: false },
+          { name: "Failure Rate", value: String(alert.failure_rate ?? 0), inline: true },
+          { name: "Failed Proxies", value: String(alert.failed_proxies ?? 0), inline: true },
+          { name: "Threshold", value: String(alert.threshold ?? 0.2), inline: true },
           {
             name: "Failed IDs",
             value:
-              alert.failed_proxy_ids.length > 0
+              alert.failed_proxy_ids && alert.failed_proxy_ids.length > 0
                 ? alert.failed_proxy_ids.join(", ")
                 : "None",
             inline: false,
           },
         ],
-
         footer: {
           text: "ProxyMaze Monitor",
         },
-
-        timestamp:
-          new Date().toISOString(),
+        timestamp: new Date().toISOString(),
       },
     ],
   };
@@ -156,9 +127,40 @@ export const sendIntegrationEvent = async (
 
       console.log(`✅ ${integration.type} integration sent`);
     } catch (error: any) {
+      const status = error?.response?.status;
+
+      if (status === 429) {
+        const retryAfter =
+          error?.response?.data?.retry_after || 5;
+
+        console.log(
+          `⏳ ${integration.type} rate limited. Retrying after ${retryAfter}s`
+        );
+
+        await sleep(retryAfter * 1000);
+
+        try {
+          await axios.post(integration.webhook_url, payload, {
+            headers: {
+              "Content-Type": "application/json",
+            },
+            timeout: 5000,
+          });
+
+          console.log(`✅ ${integration.type} integration sent after retry`);
+          continue;
+        } catch (retryError: any) {
+          console.log(
+            `❌ ${integration.type} retry failed`,
+            retryError?.response?.status || retryError?.message
+          );
+          continue;
+        }
+      }
+
       console.log(
         `❌ ${integration.type} integration failed`,
-        error?.response?.status || error?.message
+        status || error?.message
       );
     }
   }
