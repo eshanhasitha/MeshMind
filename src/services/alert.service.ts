@@ -29,24 +29,32 @@ export const evaluateAlerts = async (): Promise<void> => {
 
   try {
     const proxies = getAllProxies();
-
     const total = proxies.length;
+    const activeAlert = getActiveAlert();
 
     if (total === 0) {
+      if (activeAlert) {
+        activeAlert.status = "resolved";
+        activeAlert.resolved_at = new Date().toISOString();
+
+        await Promise.all([
+          sendWebhookEvent("alert.resolved", {
+            event: "alert.resolved",
+            alert_id: activeAlert.alert_id,
+            resolved_at: activeAlert.resolved_at,
+          }),
+
+          sendIntegrationEvent("alert.resolved", activeAlert),
+        ]);
+      }
+
       return;
     }
 
     const failed = proxies.filter((proxy) => proxy.status === "down");
-
     const failedCount = failed.length;
-
     const failureRate = Number((failedCount / total).toFixed(2));
 
-    const activeAlert = getActiveAlert();
-
-    /*
-     FIRE ALERT
-    */
     if (failureRate >= ALERT_THRESHOLD && !activeAlert) {
       const newAlert: Alert = {
         alert_id: uuidv4(),
@@ -61,9 +69,6 @@ export const evaluateAlerts = async (): Promise<void> => {
         message: "Proxy pool failure rate exceeded threshold",
       };
 
-      /*
-       Push first so persistent breach cannot create duplicate active alert
-      */
       alerts.push(newAlert);
 
       await Promise.all([
@@ -82,13 +87,21 @@ export const evaluateAlerts = async (): Promise<void> => {
         sendIntegrationEvent("alert.fired", newAlert),
       ]);
 
-      console.log(`🚨 ALERT FIRED: ${newAlert.alert_id}`);
+      console.log(`[ALERT] fired ${newAlert.alert_id}`);
       return;
     }
 
-    /*
-     RESOLVE ALERT
-    */
+    if (failureRate >= ALERT_THRESHOLD && activeAlert) {
+      activeAlert.failure_rate = failureRate;
+      activeAlert.total_proxies = total;
+      activeAlert.failed_proxies = failedCount;
+      activeAlert.failed_proxy_ids = failed.map((proxy) => proxy.id);
+      activeAlert.threshold = ALERT_THRESHOLD;
+      activeAlert.message = "Proxy pool failure rate exceeded threshold";
+
+      return;
+    }
+
     if (failureRate < ALERT_THRESHOLD && activeAlert) {
       activeAlert.status = "resolved";
       activeAlert.resolved_at = new Date().toISOString();
@@ -103,7 +116,7 @@ export const evaluateAlerts = async (): Promise<void> => {
         sendIntegrationEvent("alert.resolved", activeAlert),
       ]);
 
-      console.log(`✅ ALERT RESOLVED: ${activeAlert.alert_id}`);
+      console.log(`[ALERT] resolved ${activeAlert.alert_id}`);
     }
   } finally {
     evaluating = false;

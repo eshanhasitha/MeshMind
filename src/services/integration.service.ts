@@ -8,13 +8,15 @@ let integrations: Integration[] = [];
 export const addIntegration = (
   type: IntegrationType,
   webhook_url: string,
-  username?: string
+  username?: string,
+  events?: string[]
 ): Integration => {
   const integration: Integration = {
     id: uuidv4(),
     type,
     webhook_url,
     username,
+    events,
     created_at: new Date().toISOString(),
   };
 
@@ -103,6 +105,13 @@ export const sendIntegrationEvent = async (
   alert: Alert
 ): Promise<void> => {
   for (const integration of integrations) {
+    if (
+      integration.events &&
+      !integration.events.includes(event)
+    ) {
+      continue;
+    }
+
     const payload =
       integration.type === "slack"
         ? buildSlackPayload(event, alert, integration.username)

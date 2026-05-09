@@ -11,11 +11,29 @@ import {
 const extractProxyId = (
   url: string
 ): string => {
+  try {
+    const parsed = new URL(url);
+    const parts = parsed.pathname
+      .split("/")
+      .filter(Boolean);
 
-  return (
-    url.split("/").pop() ||
-    url
-  );
+    if (parts.length > 0) {
+      return parts[
+        parts.length - 1
+      ]!;
+    }
+
+    return parsed.host || url;
+  } catch (error) {
+    const cleaned = url
+      .split("?")[0]
+      ?.replace(/\/+$/, "");
+
+    return (
+      cleaned?.split("/").pop() ||
+      url
+    );
+  }
 };
 
 /*

@@ -5,5 +5,6 @@ export interface Integration {
   type: IntegrationType;
   webhook_url: string;
   username?: string;
+  events?: string[];
   created_at: string;
 }

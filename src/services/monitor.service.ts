@@ -26,7 +26,11 @@ const checkProxy = async (
       return "up";
     }
 
-    return "down";
+    if (response.status >= 500) {
+      return "down";
+    }
+
+    return "up";
   } catch (error: any) {
     return "down";
   }
