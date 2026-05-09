@@ -1,14 +1,9 @@
+import { db } from "../db/database";
+
 import {
   Proxy,
-  ProxyHistory,
   ProxyStatus,
 } from "../models/proxy.model";
-
-
-/*
- In-memory proxy storage
-*/
-let proxies: Proxy[] = [];
 
 /*
  Extract proxy ID
@@ -16,9 +11,11 @@ let proxies: Proxy[] = [];
 const extractProxyId = (
   url: string
 ): string => {
-  const parts = url.split("/");
 
-  return parts[parts.length - 1];
+  return (
+    url.split("/").pop() ||
+    url
+  );
 };
 
 /*
@@ -26,7 +23,27 @@ const extractProxyId = (
 */
 export const getAllProxies =
   (): Proxy[] => {
-    return proxies;
+
+    const rows =
+      db.prepare(
+        "SELECT * FROM proxies"
+      ).all() as any[];
+
+    return rows.map(
+      (row) => ({
+        ...row,
+
+        history: db
+          .prepare(
+            `
+            SELECT checked_at, status
+            FROM proxy_history
+            WHERE proxy_id = ?
+            `
+          )
+          .all(row.id),
+      })
+    );
   };
 
 /*
@@ -35,17 +52,48 @@ export const getAllProxies =
 export const getProxyById = (
   id: string
 ): Proxy | undefined => {
-  return proxies.find(
-    (proxy) => proxy.id === id
-  );
+
+  const row =
+    db.prepare(
+      `
+      SELECT *
+      FROM proxies
+      WHERE id = ?
+      `
+    ).get(id) as any;
+
+  if (!row) {
+    return undefined;
+  }
+
+  return {
+    ...row,
+
+    history: db
+      .prepare(
+        `
+        SELECT checked_at, status
+        FROM proxy_history
+        WHERE proxy_id = ?
+        `
+      )
+      .all(id),
+  };
 };
 
 /*
- Clear all proxies
+ Clear proxies
 */
 export const clearProxies =
   (): void => {
-    proxies = [];
+
+    db.prepare(
+      "DELETE FROM proxies"
+    ).run();
+
+    db.prepare(
+      "DELETE FROM proxy_history"
+    ).run();
   };
 
 /*
@@ -55,44 +103,57 @@ export const addProxies = (
   proxyUrls: string[],
   replace: boolean = false
 ): Proxy[] => {
+
   if (replace) {
-    proxies = [];
+    clearProxies();
   }
 
-  const newProxies: Proxy[] =
-    proxyUrls.map((url) => ({
-      id: extractProxyId(url),
+  for (const url of proxyUrls) {
 
-      url,
+    const id =
+      extractProxyId(url);
 
-      status: "pending",
+    db.prepare(`
+      INSERT OR REPLACE INTO proxies
+      (
+        id,
+        url,
+        status,
+        last_checked_at,
+        consecutive_failures,
+        total_checks,
+        successful_checks,
+        uptime_percentage
+      )
+      VALUES (
+        ?, ?, 'pending',
+        NULL,
+        0,
+        0,
+        0,
+        0
+      )
+    `).run(id, url);
+  }
 
-      last_checked_at: null,
-
-      consecutive_failures: 0,
-
-      total_checks: 0,
-
-      successful_checks: 0,
-
-      uptime_percentage: 0,
-
-      history: [],
-    }));
-
-  proxies.push(...newProxies);
-
-  return newProxies;
+  return proxyUrls.map(
+    (url) =>
+      getProxyById(
+        extractProxyId(url)
+      )!
+  );
 };
 
 /*
- Update proxy monitoring data
+ Update proxy status
 */
 export const updateProxyStatus = (
   id: string,
   status: ProxyStatus
 ): void => {
-  const proxy = getProxyById(id);
+
+  const proxy =
+    getProxyById(id);
 
   if (!proxy) {
     return;
@@ -101,49 +162,65 @@ export const updateProxyStatus = (
   const now =
     new Date().toISOString();
 
-  /*
-   Update core fields
-  */
-  proxy.status = status;
+  const totalChecks =
+    proxy.total_checks + 1;
 
-  proxy.last_checked_at =
-    now;
+  const successfulChecks =
+    status === "up"
+      ? proxy.successful_checks + 1
+      : proxy.successful_checks;
 
-  proxy.total_checks += 1;
+  const consecutiveFailures =
+    status === "up"
+      ? 0
+      : proxy.consecutive_failures + 1;
 
-  /*
-   Success/failure logic
-  */
-  if (status === "up") {
-    proxy.successful_checks += 1;
-
-    proxy.consecutive_failures = 0;
-  } else {
-    proxy.consecutive_failures += 1;
-  }
-
-  /*
-   Calculate uptime %
-  */
-  proxy.uptime_percentage =
+  const uptimePercentage =
     Number(
       (
-        (proxy.successful_checks /
-          proxy.total_checks) *
+        (successfulChecks /
+          totalChecks) *
         100
       ).toFixed(1)
     );
 
   /*
+   Update proxy
+  */
+  db.prepare(`
+    UPDATE proxies
+    SET
+      status = ?,
+      last_checked_at = ?,
+      consecutive_failures = ?,
+      total_checks = ?,
+      successful_checks = ?,
+      uptime_percentage = ?
+    WHERE id = ?
+  `).run(
+    status,
+    now,
+    consecutiveFailures,
+    totalChecks,
+    successfulChecks,
+    uptimePercentage,
+    id
+  );
+
+  /*
    Save history
   */
-  const historyEntry: ProxyHistory =
-    {
-      checked_at: now,
-      status,
-    };
-
-  proxy.history.push(
-    historyEntry
+  db.prepare(`
+    INSERT INTO proxy_history
+    (
+      proxy_id,
+      checked_at,
+      status
+    )
+    VALUES (?, ?, ?)
+  `).run(
+    id,
+    now,
+    status
   );
 };

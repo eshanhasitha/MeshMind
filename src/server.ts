@@ -1,3 +1,4 @@
+import "./db/database";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -9,6 +10,7 @@ import alertRoutes from "./routes/alert.routes";
 import webhookRoutes from "./routes/webhook.routes";
 import integrationRoutes from "./routes/integration.routes";
 import metricsRoutes from "./routes/metrics.routes";
+
 
 dotenv.config();
 
