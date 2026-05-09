@@ -3,8 +3,16 @@ import { v4 as uuidv4 } from "uuid";
 import { Alert } from "../models/alert.model";
 
 import { getAllProxies } from "./proxy.service";
-import { sendWebhookEvent } from "./webhook.service";
-import { sendIntegrationEvent } from "./integration.service";
+
+import {
+  sendWebhookEvent,
+} from "./webhook.service";
+
+import {
+  sendIntegrationEvent,
+} from "./integration.service";
+
+const getWebhooks = (): unknown[] => [];
 
 /*
  Alert storage
@@ -17,7 +25,7 @@ let alerts: Alert[] = [];
 const ALERT_THRESHOLD = 0.2;
 
 /*
- Get all alerts
+ Get alerts
 */
 export const getAlerts =
   (): Alert[] => {
@@ -37,10 +45,10 @@ export const getActiveAlert =
   };
 
 /*
- Evaluate alert state
+ Evaluate alerts
 */
 export const evaluateAlerts =
-  (): void => {
+  async (): Promise<void> => {
 
     const proxies =
       getAllProxies();
@@ -49,7 +57,7 @@ export const evaluateAlerts =
       proxies.length;
 
     /*
-     Avoid division by zero
+     Avoid divide by zero
     */
     if (total === 0) {
       return;
@@ -74,69 +82,69 @@ export const evaluateAlerts =
      FIRE ALERT
     */
     if (
-      failureRate >=
-        ALERT_THRESHOLD &&
+      failureRate >= ALERT_THRESHOLD &&
       !activeAlert
     ) {
 
-      const newAlert: Alert =
-        {
-          alert_id:
-            uuidv4(),
+      const newAlert: Alert = {
+        alert_id:
+          uuidv4(),
 
-          status: "active",
+        status: "active",
 
-          failure_rate:
-            Number(
-              failureRate.toFixed(
-                2
-              )
-            ),
+        failure_rate:
+          Number(
+            failureRate.toFixed(2)
+          ),
 
-          total_proxies:
-            total,
+        total_proxies:
+          total,
 
-          failed_proxies:
-            failedCount,
+        failed_proxies:
+          failedCount,
 
-          failed_proxy_ids:
-            failed.map(
-              (proxy) =>
-                proxy.id
-            ),
+        failed_proxy_ids:
+          failed.map(
+            (proxy) => proxy.id
+          ),
 
-          threshold_value:
-            ALERT_THRESHOLD,
+        threshold_value:
+          ALERT_THRESHOLD,
 
-          fired_at:
-            new Date().toISOString(),
+        fired_at:
+          new Date().toISOString(),
 
-          resolved_at: null,
+        resolved_at:
+          null,
 
-          message:
-            `Failure threshold exceeded (${failedCount}/${total} proxies down)`,
-        };
+        message:
+          `Failure threshold exceeded (${failedCount}/${total} proxies down)`,
+      };
 
-      alerts.push(
-        newAlert
-      );
-    /*
-    Send webhook
-    */
-    sendWebhookEvent(
-    "alert.fired",
-    {
-        event: "alert.fired",
-
-        alert: newAlert,
-        
-    }
-    
-    
-),sendIntegrationEvent("alert.fired", newAlert);;
+      alerts.push(newAlert);
 
       console.log(
         `🚨 ALERT FIRED: ${newAlert.alert_id}`
+      );
+
+      /*
+       Send webhook
+      */
+      await sendWebhookEvent(
+        "alert.fired",
+        {
+          ...newAlert,
+          webhooks:
+            getWebhooks(),
+        }
+      );
+
+      /*
+       Send integrations
+      */
+      await sendIntegrationEvent(
+        "alert.fired",
+        newAlert
       );
     }
 
@@ -144,8 +152,7 @@ export const evaluateAlerts =
      RESOLVE ALERT
     */
     if (
-      failureRate <
-        ALERT_THRESHOLD &&
+      failureRate < ALERT_THRESHOLD &&
       activeAlert
     ) {
 
@@ -155,22 +162,28 @@ export const evaluateAlerts =
       activeAlert.resolved_at =
         new Date().toISOString();
 
-    /*
-    Send webhook
-    */
-    sendWebhookEvent(
-    "alert.resolved",
-    {
-        event:
-        "alert.resolved",
-
-        alert:
-        activeAlert,
-    }
-    ),sendIntegrationEvent("alert.resolved", activeAlert);
-
       console.log(
         `✅ ALERT RESOLVED: ${activeAlert.alert_id}`
+      );
+
+      /*
+       Send webhook
+      */
+      await sendWebhookEvent(
+        "alert.resolved",
+        {
+          ...activeAlert,
+          webhooks:
+            getWebhooks(),
+        }
+      );
+
+      /*
+       Send integrations
+      */
+      await sendIntegrationEvent(
+        "alert.resolved",
+        activeAlert
       );
     }
   };
