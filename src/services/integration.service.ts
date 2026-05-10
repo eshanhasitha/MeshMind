@@ -143,7 +143,6 @@ const buildDiscordPayload = (
     embeds: [
       {
         title: `ProxyMaze ${event}`,
-
         description:
           alert.message ||
           "Proxy alert triggered",
@@ -227,11 +226,10 @@ export const sendIntegrationEvent = async (
             alert
           );
 
-    const response =
-      await postWithManualRedirect(
-        integration.webhook_url,
-        payload
-      );
+    const response = await postWithManualRedirect(
+      integration.webhook_url,
+      payload
+    );
 
     if (
       response.status >= 200 &&
