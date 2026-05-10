@@ -159,13 +159,31 @@ const parseRetryAfterSeconds = (error: any): number => {
     error?.response?.data?.retry_after ??
     5;
 
-  const retryAfter = Number(retryAfterRaw);
-
-  if (!Number.isFinite(retryAfter) || retryAfter <= 0) {
-    return 5;
+  // Handle HTTP date format (e.g., "Wed, 21 Oct 2015 07:28:00 GMT")
+  if (typeof retryAfterRaw === "string" && retryAfterRaw.match(/[A-Z]/i)) {
+    try {
+      const retryDate = new Date(retryAfterRaw);
+      const delaySeconds = Math.round((retryDate.getTime() - Date.now()) / 1000);
+      
+      // If valid date, use the calculated delay but cap it
+      if (delaySeconds > 0 && Number.isFinite(delaySeconds)) {
+        return Math.min(delaySeconds, 60); // Cap at 60 seconds
+      }
+    } catch (e) {
+      // Fall through to default
+    }
   }
 
-  return retryAfter;
+  // Handle numeric delay in seconds
+  const retryAfter = Number(retryAfterRaw);
+
+  // Validate the number
+  if (!Number.isFinite(retryAfter) || retryAfter <= 0) {
+    return 5; // Default 5 seconds
+  }
+
+  // Cap maximum retry delay at 60 seconds (1 minute) - reasonable for integration retries
+  return Math.min(retryAfter, 60);
 };
 
 const createHttpError = (
