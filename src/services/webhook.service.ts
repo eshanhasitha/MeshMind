@@ -21,7 +21,6 @@ export const addWebhook = (url: string): Webhook => {
   };
 
   webhooks.push(webhook);
-
   return webhook;
 };
 
@@ -33,6 +32,28 @@ const isTransient = (status?: number) =>
   status === 502 ||
   status === 503 ||
   status === 504;
+
+const postJson = async (
+  url: string,
+  payload: any
+) => {
+  return axios.post(url, payload, {
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "ProxyMaze/1.0",
+    },
+    timeout: 10000,
+
+    /*
+     Important:
+     Do not auto-follow redirect as GET.
+     We handle status ourselves.
+    */
+    maxRedirects: 0,
+
+    validateStatus: () => true,
+  });
+};
 
 export const sendWebhookEvent = async (
   event: string,
@@ -49,7 +70,9 @@ export const sendWebhookEvent = async (
         delivery.status === "success"
     );
 
-    if (existingSuccess) continue;
+    if (existingSuccess) {
+      continue;
+    }
 
     const delivery: WebhookDelivery = {
       id: uuidv4(),
@@ -67,28 +90,62 @@ export const sendWebhookEvent = async (
       try {
         delivery.attempts += 1;
 
-        await axios.post(webhook.url, payload, {
-          headers: {
-            "Content-Type": "application/json",
-          },
-          timeout: 5000,
-        });
+        let response = await postJson(
+          webhook.url,
+          payload
+        );
 
-        delivery.status = "success";
-        delivery.delivered_at = new Date().toISOString();
+        /*
+         If evaluator redirects HTTP, repost to Location
+         using POST again, not GET.
+        */
+        if (
+          [301, 302, 307, 308].includes(response.status) &&
+          response.headers.location
+        ) {
+          response = await postJson(
+            response.headers.location,
+            payload
+          );
+        }
 
-        console.log(`[WEBHOOK] delivered ${event}`);
-      } catch (error: any) {
-        const status = error?.response?.status;
+        if (
+          response.status >= 200 &&
+          response.status < 300
+        ) {
+          delivery.status = "success";
+          delivery.delivered_at =
+            new Date().toISOString();
 
-        if (isTransient(status)) {
-          console.log(`[WEBHOOK] transient ${status}, retry ${delivery.attempts}`);
+          console.log(`[WEBHOOK] delivered ${event}`);
+          break;
+        }
+
+        if (isTransient(response.status)) {
+          console.log(
+            `[WEBHOOK] transient ${response.status}, retry ${delivery.attempts}`
+          );
+
           await sleep(1000);
           continue;
         }
 
         delivery.status = "failed";
-        console.log("[WEBHOOK] failed:", status || error?.message);
+
+        console.log(
+          "[WEBHOOK] failed:",
+          response.status
+        );
+
+        break;
+      } catch (error: any) {
+        delivery.status = "failed";
+
+        console.log(
+          "[WEBHOOK] failed:",
+          error?.message
+        );
+
         break;
       }
     }
