@@ -9,6 +9,8 @@ import { sendIntegrationEvent } from "./integration.service";
 let alerts: Alert[] = [];
 
 const ALERT_THRESHOLD = 0.2;
+const ALERT_MESSAGE =
+  "Proxy pool failure rate exceeded threshold";
 
 let evaluating = false;
 
@@ -48,6 +50,8 @@ export const evaluateAlerts = async (): Promise<void> => {
 
     const failedProxyIds = failed.map(
       (proxy) => proxy.id
+    ).sort((a, b) =>
+      a.localeCompare(b)
     );
 
     const activeAlert = getActiveAlert();
@@ -67,7 +71,7 @@ export const evaluateAlerts = async (): Promise<void> => {
       activeAlert.failed_proxy_ids = failedProxyIds;
       activeAlert.threshold = ALERT_THRESHOLD;
       activeAlert.message =
-        `Failure threshold exceeded (${failedCount}/${total} proxies down)`;
+        ALERT_MESSAGE;
 
       return;
     }
@@ -81,7 +85,8 @@ export const evaluateAlerts = async (): Promise<void> => {
       !activeAlert
     ) {
       const newAlert: Alert = {
-        alert_id: uuidv4(),
+        alert_id:
+          `alert-${uuidv4()}`,
         status: "active",
         failure_rate: failureRate,
         total_proxies: total,
@@ -91,7 +96,7 @@ export const evaluateAlerts = async (): Promise<void> => {
         fired_at: new Date().toISOString(),
         resolved_at: null,
         message:
-          `Failure threshold exceeded (${failedCount}/${total} proxies down)`,
+          ALERT_MESSAGE,
       };
 
       alerts.push(newAlert);

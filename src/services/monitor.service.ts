@@ -2,7 +2,7 @@ import axios from "axios";
 
 import {
   getAllProxies,
-  updateProxyStatus,
+  updateProxyStatuses,
 } from "./proxy.service";
 
 import { getConfig } from "./config.service";
@@ -32,12 +32,25 @@ const checkProxy = async (
 export const monitorAllProxies = async (): Promise<void> => {
   const proxies = getAllProxies();
 
-  for (const proxy of proxies) {
-    const status = await checkProxy(proxy.url);
+  const probeResults = await Promise.all(
+    proxies.map(async (proxy) => {
+      const status = await checkProxy(proxy.url);
 
-    updateProxyStatus(proxy.id, status);
+      return {
+        id: proxy.id,
+        status,
+        checked_at:
+          new Date().toISOString(),
+      };
+    })
+  );
 
-    console.log(`[MONITOR] ${proxy.id} => ${status}`);
+  updateProxyStatuses(probeResults);
+
+  for (const result of probeResults) {
+    console.log(
+      `[MONITOR] ${result.id} => ${result.status}`
+    );
   }
 
   await evaluateAlerts();
